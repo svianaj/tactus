@@ -14,7 +14,6 @@ from tactus.datetime_utils import (
     get_decade,
     get_month_list,
 )
-from tactus.eps.eps_setup import get_member_config
 from tactus.host_actions import SelectHost
 from tactus.logs import logger
 from tactus.scheduler import EcflowServer
@@ -632,7 +631,6 @@ class MarsprepFamily(EcflowSuiteFamily):
             ecf_files,
             ecf_files_remotely=ecf_files_remotely,
             trigger=marsprep_trigger_nodes,
-            add_var_trigger=add_var_trigger,
             remote_path=remote_path,
         )
         latlon_deps = ["GG", "SH"]
@@ -857,7 +855,7 @@ class LBCSubFamilyGenerator(EcflowSuiteFamily):
             # Must not exhaust the generator in the planning
             ltg1, ltg2 = tee(lbc_time_generator)
             self.lbc_time_generator = ltg1
-            self.slaf_doer = slaf_planner(config, ltg2, self.member)
+            self.slaf_doer = slaf_planner(config, ltg2, member)
         else:
             self.lbc_time_generator = lbc_time_generator
             self.slaf_doer = {}
@@ -1452,6 +1450,7 @@ class CycleFamily(EcflowSuiteFamily):
         ecf_files,
         trigger=None,
         ecf_files_remotely=None,
+        member=None,
     ):
         """Class initialization."""
         super().__init__(
@@ -1462,9 +1461,16 @@ class CycleFamily(EcflowSuiteFamily):
             ecf_files_remotely=ecf_files_remotely,
         )
 
-        if (
-            config["perturbations.pertana.active"]
-            or config["perturbations.pertsurf.active"]
+        initialization_family = InitializationFamily(
+            self,
+            config,
+            task_settings,
+            input_template,
+            ecf_files,
+            ecf_files_remotely=ecf_files_remotely,
+        )
+        if member > 0 and (
+            config["perturbations.pertana"] or config["perturbations.pertsurf"]
         ):
             perturbation_family = PerturbationFamily(
                 self,
@@ -1472,10 +1478,11 @@ class CycleFamily(EcflowSuiteFamily):
                 task_settings,
                 input_template,
                 ecf_files,
+                trigger=initialization_family,
                 ecf_files_remotely=ecf_files_remotely,
             )
         else:
-            perturbation_family = trigger
+            perturbation_family = initialization_family
 
         ForecastFamily(
             self,
@@ -1580,7 +1587,7 @@ class PerturbationFamily(EcflowSuiteFamily):
             ecf_files_remotely=ecf_files_remotely,
         )
 
-        if config["perturbations.pertana.active"]:
+        if config["perturbations.pertana"]:
             EcflowSuiteTask(
                 "Pertana",
                 self,
@@ -1591,7 +1598,7 @@ class PerturbationFamily(EcflowSuiteFamily):
                 ecf_files_remotely=ecf_files_remotely,
             )
 
-        if config["perturbations.pertsurf.active"]:
+        if config["perturbations.pertsurf"]:
             EcflowSuiteTask(
                 "Pertsurf",
                 self,
@@ -1744,8 +1751,6 @@ class TimeDependentFamily(EcflowSuiteFamily):
             member_families: List[EcflowSuiteFamily] = []
             member_cycle_families: List[EcflowSuiteFamily] = []
             for member in config["eps.general.members"]:
-                member_config = get_member_config(config, member=member)
-
                 member_family = EcflowSuiteFamily(
                     f"mbr{member:03d}",
                     time_family,
@@ -1756,7 +1761,7 @@ class TimeDependentFamily(EcflowSuiteFamily):
                 member_families.append(member_family)
 
                 mbr_trigger = trigger
-                if member_config["suite_control.member_specific_static_data"]:
+                if config["suite_control.member_specific_static_data"]:
                     # If trigger has static_data_members, then let each member family
                     # trigger on the corresponding static_data_member
                     try:
@@ -1767,7 +1772,7 @@ class TimeDependentFamily(EcflowSuiteFamily):
                             f"in trigger. Using trigger {trigger}"
                         )
 
-                if member_config["suite_control.member_specific_mars_prep"]:
+                if config["suite_control.member_specific_mars_prep"]:
                     external_marsprep_trigger_nodes = [
                         prev_interpolation_triggers.get(member)
                     ]
@@ -1779,7 +1784,7 @@ class TimeDependentFamily(EcflowSuiteFamily):
 
                     inputdata = InputDataFamily(
                         member_family,
-                        member_config,
+                        config,
                         task_settings,
                         input_template,
                         ecf_files,
@@ -1790,10 +1795,10 @@ class TimeDependentFamily(EcflowSuiteFamily):
                     )
                     ready_for_cycle = inputdata
 
-                if member_config["suite_control.interpolate_boundaries"]:
+                if config["suite_control.interpolate_boundaries"]:
                     int_family = InterpolationFamily(
                         member_family,
-                        member_config,
+                        config,
                         task_settings,
                         input_template,
                         ecf_files,
@@ -1819,19 +1824,20 @@ class TimeDependentFamily(EcflowSuiteFamily):
 
                 cycle_family = CycleFamily(
                     member_family,
-                    member_config,
+                    config,
                     task_settings,
                     input_template,
                     ecf_files,
                     trigger=ready_for_cycle,
                     ecf_files_remotely=ecf_files_remotely,
+                    member=member,
                 )
                 member_cycle_families.append(cycle_family)
                 prev_cycle_triggers[member] = [cycle_family]
 
                 postcycle_families[member] = PostCycleFamily(
                     member_family,
-                    member_config,
+                    config,
                     task_settings,
                     input_template,
                     ecf_files,

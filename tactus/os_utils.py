@@ -406,48 +406,34 @@ def remove_ifexists(file, etime=sys.float_info.max):
 class FileLock:
     """Context manager for file locking using lockfiles."""
 
-    def _try_create_lockfile(self):
-        """Atomically try to create the lockfile.
+    def _create_lockfile(self):
+        """Create lockfile for a given file.
 
-        Returns:
-            bool: True if the lockfile was created by this call, False if it
-                already existed (i.e. another process/thread holds the lock).
+        Raises:
+            FileExistsError: If the lockfile already exists.
         """
-        try:
-            # O_CREAT | O_EXCL is atomic on POSIX and Windows: the call
-            # fails with FileExistsError if the file already exists, so
-            # no two processes can both succeed.
-            fd = os.open(
-                self.lockfile,
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                0o644,
+        if os.path.exists(self.lockfile):
+            raise FileExistsError(
+                f"Lockfile {self.lockfile} already exists. Cannot create"
+                + f"lockfile for {self.filepath}."
             )
-        except FileExistsError:
-            return False
 
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write(f"Lockfile for {self.filepath} created at {time.ctime()}")
-        except Exception:
-            remove_ifexists(self.lockfile)
-            raise
-
+        with open(self.lockfile, "w") as f:
+            f.write(f"Lockfile for {self.filepath} created at {time.ctime()}")
         atexit.register(remove_ifexists, self.lockfile)
-        return True
 
     def _delete_lockfile(self):
         """Delete lockfile for a given file."""
         remove_ifexists(self.lockfile)
 
-    def _acquire(self):
-        """Atomically wait for and acquire the lockfile.
+    def _wait_for_lockfile(self):
+        """Wait for lockfile to be removed.
 
         Raises:
-            TimeoutError: If the lock could not be acquired within
-                ``self.timeout`` seconds.
+            TimeoutError: If the lockfile still exists after the specified timeout.
         """
         start_time = time.time()
-        while not self._try_create_lockfile():
+        while os.path.exists(self.lockfile):
             elapsed_time = time.time() - start_time
             if elapsed_time > self.timeout:
                 raise TimeoutError(
@@ -487,8 +473,10 @@ class FileLock:
         """Enter the runtime context related to this object."""
         if self.delete_existing:
             remove_ifexists(self.lockfile)
+        else:
+            self._wait_for_lockfile()
 
-        self._acquire()
+        self._create_lockfile()
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Exit the runtime context related to this object."""

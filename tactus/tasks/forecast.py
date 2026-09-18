@@ -237,9 +237,7 @@ class Forecast(PySurfexBaseTask):
             self.fmanager.input(target, dest)
 
         # Initial files
-        initfile, initfile_sfx, status = InitialConditions(
-            self.config
-        ).find_initial_files("Forecast")
+        initfile, initfile_sfx = InitialConditions(self.config).find_initial_files()
         self.fmanager.input(initfile, f"ICMSH{self.cnmexp}INIT")
         if not self.surfex:
             initfile_sfx = None
@@ -350,6 +348,4 @@ class FirstGuess(Task):
 
     def execute(self):
         """Find initial file."""
-        initfile, initfile_sfx, _ = InitialConditions(self.config).find_initial_files(
-            "Forecast"
-        )
+        initfile, initfile_sfx = InitialConditions(self.config).find_initial_files()
